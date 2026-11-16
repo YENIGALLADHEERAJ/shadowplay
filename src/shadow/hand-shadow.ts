@@ -1,4 +1,5 @@
 import { Matrix4, Vector3 } from '@iwsdk/core';
+import { ANGLE, FEATURES } from './pose-match.js';
 import { ShapePool, type Capsule, type Polygon } from './shapes.js';
 
 /** Where the lamp and the paper screen are, in world space. */
@@ -25,6 +26,18 @@ for (let f = 0; f < 4; f++) {
   BONES.push([0, b], [b, b + 1], [b + 1, b + 2], [b + 2, b + 3], [b + 3, b + 4]);
 }
 const PALM = [0, 1, 2, 6, 11, 16, 21, 20];
+// Joint chains used to measure how straight each finger is (thumb..pinky).
+const CHAINS = [
+  [1, 2, 3, 4],
+  [6, 7, 8, 9],
+  [11, 12, 13, 14],
+  [16, 17, 18, 19],
+  [21, 22, 23, 24],
+];
+// Straightness (chord / path length) mapped to 0..1 extension.
+const CURLED = [0.8, 0.55, 0.55, 0.55, 0.55];
+const STRAIGHT = [0.97, 0.93, 0.93, 0.93, 0.93];
+const MIDDLE_KNUCKLE = 11;
 const FLESH = 1.15; // joint radii are a little thinner than the real finger
 
 type HandSide = 'left' | 'right';
@@ -46,6 +59,12 @@ export class HandShadow {
   /** Projected joint positions (u, v) and validity per hand, for effects. */
   readonly uv = { left: new Float32Array(JOINTS * 2), right: new Float32Array(JOINTS * 2) };
   readonly tracked = { left: false, right: false };
+  /**
+   * Pose features per hand (see pose-match.ts), valid when the hand is
+   * tracked and its shadow lands on the screen.
+   */
+  readonly features = { left: new Float32Array(FEATURES), right: new Float32Array(FEATURES) };
+  readonly onScreen = { left: false, right: false };
   /** Mean distance of tracked hands from the lamp (metres), 0 if none. */
   handToLamp = 0;
 
@@ -124,8 +143,10 @@ export class HandShadow {
       if (!this.tracked[side]) {
         this.hideHand(base);
         uv.fill(-10);
+        this.onScreen[side] = false;
         continue;
       }
+      this.computeFingers(side);
       const wp = this.world[side];
       const rad = this.radii[side];
       // Project every joint once; store (u, v) and the per-joint scale in t.
@@ -160,8 +181,33 @@ export class HandShadow {
         palm.pts[q * 2 + 1] = uv[j * 2 + 1];
       }
       if (!palmOk) palm.pts[0] = -10;
+
+      // Screen direction of the hand, and whether its shadow is on the paper.
+      const wu = uv[0];
+      const wv = uv[1];
+      const ku = uv[MIDDLE_KNUCKLE * 2];
+      const kv = uv[MIDDLE_KNUCKLE * 2 + 1];
+      const ok = wu > -1 && ku > -1;
+      this.features[side][ANGLE] = ok
+        ? Math.atan2((wv - kv) * stage.height, (ku - wu) * stage.width)
+        : 0;
+      this.onScreen[side] = ok && ku > 0.02 && ku < 0.98 && kv > 0.02 && kv < 0.98;
     }
     this.handToLamp = lampCount ? lampDist / lampCount : 0;
+  }
+
+  /** Finger extension 0..1 from how straight each joint chain is in 3D. */
+  private computeFingers(side: HandSide): void {
+    const wp = this.world[side];
+    const out = this.features[side];
+    for (let f = 0; f < 5; f++) {
+      const c = CHAINS[f];
+      let path = 0;
+      for (let k = 1; k < c.length; k++) path += dist(wp, c[k - 1], c[k]);
+      const chord = dist(wp, c[0], c[c.length - 1]);
+      const s = path > 1e-6 ? chord / path : 0;
+      out[f] = Math.min(1, Math.max(0, (s - CURLED[f]) / (STRAIGHT[f] - CURLED[f])));
+    }
   }
 
   hideAll(): void {
@@ -200,4 +246,11 @@ export class HandShadow {
     out[j * 2 + 1] = 0.5 - this.s.dot(stage.up) / stage.height;
     return t;
   }
+}
+
+function dist(p: Float32Array, a: number, b: number): number {
+  const dx = p[a * 3] - p[b * 3];
+  const dy = p[a * 3 + 1] - p[b * 3 + 1];
+  const dz = p[a * 3 + 2] - p[b * 3 + 2];
+  return Math.sqrt(dx * dx + dy * dy + dz * dz);
 }

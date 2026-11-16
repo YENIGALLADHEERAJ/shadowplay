@@ -1,12 +1,9 @@
 import { CanvasTexture, SRGBColorSpace } from '@iwsdk/core';
 import { drawShapes, type Shape } from './shapes.js';
 
-const MASK_W = 64;
-
 /**
  * The glowing paper screen: draws lamp light, the target ghost and the live
- * hand shadow into a canvas texture, and scores how well they overlap using
- * small offscreen masks.
+ * hand shadow into a canvas texture.
  */
 export class PaperScreen {
   readonly canvas: HTMLCanvasElement;
@@ -14,13 +11,7 @@ export class PaperScreen {
   private ctx: CanvasRenderingContext2D;
   private w: number;
   private h: number;
-
-  private maskW = MASK_W;
-  private maskH: number;
-  private shadowMask: CanvasRenderingContext2D;
-  private targetMask: CanvasRenderingContext2D;
-  private targetBits: Uint8Array;
-  private targetCount = 0;
+  private paper: CanvasGradient;
 
   constructor(aspect: number, width = 512) {
     this.w = width;
@@ -32,44 +23,12 @@ export class PaperScreen {
     this.texture = new CanvasTexture(this.canvas);
     this.texture.colorSpace = SRGBColorSpace;
 
-    this.maskH = Math.round(this.maskW / aspect);
-    this.shadowMask = makeCtx(this.maskW, this.maskH);
-    this.targetMask = makeCtx(this.maskW, this.maskH);
-    this.targetBits = new Uint8Array(this.maskW * this.maskH);
-  }
-
-  setTarget(target: readonly Shape[]): void {
-    const m = this.targetMask;
-    m.clearRect(0, 0, this.maskW, this.maskH);
-    m.fillStyle = m.strokeStyle = '#000';
-    drawShapes(m, target, target.length, this.maskW, this.maskH);
-    const data = m.getImageData(0, 0, this.maskW, this.maskH).data;
-    let n = 0;
-    for (let i = 0; i < this.targetBits.length; i++) {
-      const on = data[i * 4 + 3] > 127 ? 1 : 0;
-      this.targetBits[i] = on;
-      n += on;
-    }
-    this.targetCount = n;
-  }
-
-  /** Dice overlap (0..1) between the live shadow and the target. */
-  score(shadow: readonly Shape[], count: number): number {
-    if (this.targetCount === 0) return 0;
-    const m = this.shadowMask;
-    m.clearRect(0, 0, this.maskW, this.maskH);
-    m.fillStyle = m.strokeStyle = '#000';
-    drawShapes(m, shadow, count, this.maskW, this.maskH);
-    const data = m.getImageData(0, 0, this.maskW, this.maskH).data;
-    let both = 0;
-    let lit = 0;
-    for (let i = 0; i < this.targetBits.length; i++) {
-      if (data[i * 4 + 3] > 127) {
-        lit++;
-        both += this.targetBits[i];
-      }
-    }
-    return (2 * both) / (lit + this.targetCount);
+    const cx = this.w * 0.5;
+    const cy = this.h * 0.55;
+    this.paper = this.ctx.createRadialGradient(cx, cy, this.h * 0.05, cx, cy, this.w * 0.62);
+    this.paper.addColorStop(0, '#fff3d6');
+    this.paper.addColorStop(0.55, '#f2d7a4');
+    this.paper.addColorStop(1, '#a8794a');
   }
 
   /** Paint one frame from the reusable options object. */
@@ -78,13 +37,9 @@ export class PaperScreen {
     const { target, shadow, count, progress, glow, softness } = o;
 
     // Warm lamp pool on paper.
-    const g = ctx.createRadialGradient(w * 0.5, h * 0.55, h * 0.05, w * 0.5, h * 0.55, w * 0.62);
-    g.addColorStop(0, '#fff3d6');
-    g.addColorStop(0.55, '#f2d7a4');
-    g.addColorStop(1, '#a8794a');
     ctx.globalAlpha = 1;
     ctx.filter = 'none';
-    ctx.fillStyle = g;
+    ctx.fillStyle = this.paper;
     ctx.fillRect(0, 0, w, h);
 
     // Matched: the silhouette comes alive and hops across the paper.
@@ -97,7 +52,7 @@ export class PaperScreen {
       ctx.restore();
     } else if (target) {
       // Target ghost: faint when far, warmer as the match improves.
-      ctx.globalAlpha = 0.18 + 0.25 * progress;
+      ctx.globalAlpha = 0.3 + 0.25 * progress;
       ctx.fillStyle = ctx.strokeStyle = progress > 0.85 ? '#7a3d12' : '#8a6a48';
       drawShapes(ctx, target, target.length, w, h);
     }
@@ -154,11 +109,4 @@ export interface DrawOptions {
   aliveY: number;
   caption: string;
   subcaption: string;
-}
-
-function makeCtx(w: number, h: number): CanvasRenderingContext2D {
-  const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  return c.getContext('2d', { willReadFrequently: true })!;
 }
