@@ -31,7 +31,12 @@ const HOLD_TO_MATCH = 0.5; // seconds above threshold
 const CELEBRATE = 2.6; // seconds of the creature coming alive
 const SCORE_EVERY = 3; // frames between mask scores
 
-type Phase = 'waiting' | 'playing' | 'alive';
+const ARM_BELOW = 0.6; // fraction of threshold the score must drop under first
+const CAPTURE_CYCLE = 6; // seconds per capture countdown
+const CAPTURE_SHOW = 1.5; // seconds a saved capture stays on screen
+const CAPTURE_MODE = new URLSearchParams(location.search).has('capture');
+
+type Phase = 'waiting' | 'playing' | 'alive' | 'capture';
 
 /**
  * Shadowplay core loop: a lamp and a paper screen in front of the seated
@@ -55,6 +60,9 @@ export class ShadowplaySystem extends createSystem({}) {
   private held = 0;
   private phaseTime = 0;
   private frame = 0;
+  private armed = false;
+  private captures = 0;
+  private captureDue = false;
 
   private head = new Vector3();
   private fwd = new Vector3();
@@ -102,6 +110,7 @@ export class ShadowplaySystem extends createSystem({}) {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'n') this.startLevel(this.level + 1);
       if (e.key === 'r') this.placed = false;
+      if (e.key === 'c' && CAPTURE_MODE) this.saveCapture();
     };
     window.addEventListener('keydown', onKey);
     this.cleanupFuncs.push(() => window.removeEventListener('keydown', onKey));
@@ -113,6 +122,8 @@ export class ShadowplaySystem extends createSystem({}) {
         level: LEVELS[this.level].id,
         score: Number(this.score.toFixed(3)),
         placed: this.placed,
+        armed: this.armed,
+        captures: this.captures,
         hands: { ...this.hands.tracked },
       }),
       next: () => this.startLevel(this.level + 1),
@@ -146,12 +157,17 @@ export class ShadowplaySystem extends createSystem({}) {
       }
       const anyHand = this.hands.tracked.left || this.hands.tracked.right;
       this.phase = anyHand ? 'playing' : 'waiting';
+      // A level only accepts a match once the shadow has left the target,
+      // so one held pose cannot clear several levels in a row.
+      if (!this.armed && this.score < level.threshold * ARM_BELOW) this.armed = true;
       // Progress shows closeness relative to the threshold, smoothed.
-      const p = Math.min(1, this.score / level.threshold);
+      const p = this.armed ? Math.min(1, this.score / level.threshold) : 0;
       this.smooth += (p - this.smooth) * Math.min(1, delta * 6);
-      if (this.score >= level.threshold) this.held += delta;
+      if (this.armed && this.score >= level.threshold) this.held += delta;
       else this.held = Math.max(0, this.held - delta * 2);
       if (this.held >= HOLD_TO_MATCH) this.becomeAlive();
+    } else if (this.phase === 'capture') {
+      this.updateCapture();
     } else if (this.phase === 'alive') {
       const t = this.phaseTime / CELEBRATE;
       this.draw.aliveX = t * t * 0.9; // runs off to the right
@@ -163,10 +179,47 @@ export class ShadowplaySystem extends createSystem({}) {
     // Penumbra: hands near the lamp give soft, large shadows.
     const dist = this.hands.handToLamp || 0.3;
     this.draw.softness = Math.max(1, Math.min(6, 3.2 / Math.max(0.12, dist)));
-    this.draw.progress = this.phase === 'alive' ? 1 : this.smooth;
-    this.draw.caption = this.phase === 'alive' ? `${level.creature}!` : this.captionFor();
-    this.draw.subcaption = this.phase === 'alive' ? level.reveal : '';
+    if (this.phase !== 'capture') {
+      this.draw.progress = this.phase === 'alive' ? 1 : this.smooth;
+      this.draw.caption = this.phase === 'alive' ? `${level.creature}!` : this.captionFor();
+      this.draw.subcaption = this.phase === 'alive' ? level.reveal : '';
+    }
     this.screen.draw(this.draw);
+  }
+
+  /**
+   * ?capture mode: a repeating countdown saves the current shadow as a level
+   * target. Saves go to the dev server (captures/*.json) and the console.
+   */
+  private updateCapture(): void {
+    this.draw.glow = Math.max(0, this.draw.glow - 0.03);
+    const t = this.phaseTime % CAPTURE_CYCLE;
+    const showing = t < CAPTURE_SHOW;
+    const anyHand = this.hands.tracked.left || this.hands.tracked.right;
+    if (!showing) {
+      this.draw.target = null;
+      const left = Math.ceil(CAPTURE_CYCLE - t);
+      this.draw.caption = anyHand ? `Hold your pose… ${left}` : 'Capture mode: raise your hands';
+      this.draw.subcaption = `${this.captures} saved`;
+      this.draw.progress = t / CAPTURE_CYCLE;
+      this.captureDue = true;
+    } else if (this.captureDue) {
+      this.captureDue = false;
+      if (anyHand) this.saveCapture();
+    }
+  }
+
+  private saveCapture(): void {
+    const shapes = this.hands.pool.snapshot();
+    this.captures++;
+    this.draw.target = shapes;
+    this.draw.caption = `Saved #${this.captures}`;
+    this.draw.subcaption = 'Next one in a moment';
+    this.draw.glow = 0.6;
+    const body = JSON.stringify({ n: this.captures, at: new Date().toISOString(), shapes });
+    console.log('[shadowplay capture]', body);
+    fetch(`${import.meta.env.BASE_URL}__capture`, { method: 'POST', body }).catch(() => {});
+    AudioUtils.play(this.chime);
   }
 
   private captionFor(): string {
@@ -181,11 +234,13 @@ export class ShadowplaySystem extends createSystem({}) {
     this.draw.target = level.target;
     this.draw.alive = false;
     this.draw.glow = 0;
-    this.phase = 'waiting';
+    this.phase = CAPTURE_MODE ? 'capture' : 'waiting';
     this.phaseTime = 0;
     this.held = 0;
-    this.score = 0;
     this.smooth = 0;
+    this.armed = false;
+    // Measure now: a stale 0 would arm the level while the old pose is held.
+    this.score = this.screen.score(this.hands.pool.shapes, this.hands.pool.count);
   }
 
   private becomeAlive(): void {

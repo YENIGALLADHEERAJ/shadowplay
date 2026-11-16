@@ -5,11 +5,53 @@
  * LICENSE file in the root directory of this source tree.
  */
 
+import { mkdirSync, writeFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { iwsdkDev } from '@iwsdk/vite-plugin-dev';
-import { defineConfig } from 'vite';
+import { defineConfig, type Plugin } from 'vite';
 
-export default defineConfig({
-  plugins: [iwsdkDev()],
+/**
+ * Dev-only endpoint for Shadowplay's ?capture mode: the headset POSTs a
+ * captured hand shadow and it is saved to captures/ in the project.
+ */
+function shadowCaptures(): Plugin {
+  const dir = resolve(process.cwd(), 'captures');
+  return {
+    name: 'shadowplay-captures',
+    apply: 'serve',
+    configureServer(server) {
+      server.middlewares.use('/__capture', (req, res) => {
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        let body = '';
+        req.on('data', (chunk: Buffer) => {
+          body += chunk;
+          if (body.length > 200_000) req.destroy();
+        });
+        req.on('end', () => {
+          try {
+            const data = JSON.parse(body) as { n: number };
+            mkdirSync(dir, { recursive: true });
+            const file = resolve(dir, `capture-${Date.now()}-${data.n}.json`);
+            writeFileSync(file, JSON.stringify(data, null, 1));
+            res.statusCode = 201;
+          } catch {
+            res.statusCode = 400;
+          }
+          res.end();
+        });
+      });
+    },
+  };
+}
+
+// `vite --mode http` serves plain HTTP on localhost for desktop browsers that
+// reject the self-signed dev certificate. Headsets need the default HTTPS.
+export default defineConfig(({ mode }) => ({
+  plugins: [iwsdkDev({ https: mode !== 'http' }), shadowCaptures()],
   server: { host: '0.0.0.0', port: 8081, open: false },
   build: {
     outDir: 'dist',
@@ -42,4 +84,4 @@ export default defineConfig({
   },
   publicDir: 'public',
   base: './',
-});
+}));
