@@ -103,8 +103,9 @@ export class PaperScreen {
     ctx.drawImage(this.shadowCanvas, 0, 0, w, h);
 
     if (glow > 0) {
-      ctx.globalAlpha = glow * 0.7;
-      ctx.fillStyle = '#fff8e8';
+      // On a wall the flash stays a round pool so the screen's edges never show.
+      ctx.globalAlpha = glow * (o.wall ? 1 : 0.7);
+      ctx.fillStyle = o.wall ? this.pool : '#fff8e8';
       ctx.fillRect(0, 0, w, h);
     }
 

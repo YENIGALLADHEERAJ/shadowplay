@@ -50,6 +50,7 @@ const ARM_BELOW = 0.6; // fraction of threshold the score must drop under first
 const CAPTURE_CYCLE = 6; // seconds per capture countdown
 const CAPTURE_SHOW = 1.5; // seconds a saved capture stays on screen
 const CAPTURE_MODE = new URLSearchParams(location.search).has('capture');
+const FORCE_PAPER = new URLSearchParams(location.search).has('paper');
 
 type Phase = 'waiting' | 'playing' | 'alive' | 'capture';
 type Mode = 'paper' | 'wall';
@@ -476,7 +477,7 @@ export class ShadowplaySystem extends createSystem({
     this.fwd.normalize();
 
     const s = this.stage;
-    const wallT = this.findWall();
+    const wallT = FORCE_PAPER ? -1 : this.findWall();
     if (wallT > 0) {
       this.mode = 'wall';
       this.wallDist = wallT;
