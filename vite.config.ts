@@ -5,7 +5,7 @@
  * LICENSE file in the root directory of this source tree.
  */
 
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createReadStream, createWriteStream, mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { iwsdkDev } from '@iwsdk/vite-plugin-dev';
 import { defineConfig, type Plugin } from 'vite';
@@ -20,6 +20,38 @@ function shadowCaptures(): Plugin {
     name: 'shadowplay-captures',
     apply: 'serve',
     configureServer(server) {
+      // Screen recordings (webm) streamed to recordings/, which is git-ignored.
+      server.middlewares.use('/__video', (req, res) => {
+        const vdir = resolve(process.cwd(), 'recordings');
+        mkdirSync(vdir, { recursive: true });
+        const name = new URL(req.url ?? '', 'http://x').searchParams.get('name') ?? 'clip.webm';
+        const safe = name.replace(/[^a-zA-Z0-9._-]/g, '_');
+        if (req.method === 'GET') {
+          res.setHeader('Content-Type', safe.endsWith('.png') ? 'image/png' : 'video/webm');
+          createReadStream(resolve(vdir, safe))
+            .on('error', () => {
+              res.statusCode = 404;
+              res.end();
+            })
+            .pipe(res);
+          return;
+        }
+        if (req.method !== 'POST') {
+          res.statusCode = 405;
+          res.end();
+          return;
+        }
+        const out = createWriteStream(resolve(vdir, safe));
+        req.pipe(out);
+        out.on('finish', () => {
+          res.statusCode = 201;
+          res.end(safe);
+        });
+        out.on('error', () => {
+          res.statusCode = 500;
+          res.end();
+        });
+      });
       server.middlewares.use('/__capture', (req, res) => {
         if (req.method !== 'POST') {
           res.statusCode = 405;

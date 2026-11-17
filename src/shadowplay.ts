@@ -212,6 +212,7 @@ export class ShadowplaySystem extends createSystem({
       }),
       next: () => this.startLevel(this.level + 1),
       recenter: () => (this.placed = false),
+      audioStream: () => this.audio.recordStream(),
       planes: () =>
         [...this.queries.planes.entities].map((e) => {
           const raw = e.getValue(XRPlane, '_plane') as

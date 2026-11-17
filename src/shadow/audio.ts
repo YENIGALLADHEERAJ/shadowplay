@@ -32,6 +32,14 @@ export class ShadowAudio {
     }
   }
 
+  /** Audio stream of everything the game plays, for screen recordings. */
+  recordStream(): MediaStream | null {
+    if (!this.ctx || !this.master) return null;
+    const dest = this.ctx.createMediaStreamDestination();
+    this.master.connect(dest);
+    return dest.stream;
+  }
+
   /** 0..1: how strongly the lamp hums (hands in the light, match closeness). */
   setHum(level: number): void {
     if (!this.ctx || !this.humGain) return;
