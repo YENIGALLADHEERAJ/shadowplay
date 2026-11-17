@@ -1,45 +1,76 @@
-# IWSDK App
+# Shadowplay
 
-This project uses `iwsdk.config.json` for declarative scene, asset, component,
-XR, and emulator configuration. Application systems remain explicit in
-`src/index.ts`.
+**Your hands are the cast.** A seated, hands-only mixed reality game for Meta
+Quest. A small lamp glows below your chin, and your real hands throw shadows
+onto your real wall. Shape your hands into a rabbit, a stag or a butterfly, and
+the shadow comes alive and runs off across the wall.
+
+Built with the [Immersive Web SDK](https://iwsdk.dev) (WebXR) for the Meta VR
+Start Developer Competition 2026 (Gaming track, New Experience division).
+
+## Play
+
+Open the hosted link in the Meta Quest Browser, sit down facing a wall, and
+press **Start**. No controllers are needed.
+
+- If a wall is detected 0.7 to 4.5 m ahead (room setup / Space Setup), the
+  lamplight and shadows land on that wall.
+- With no wall ahead, a paper screen in a wooden frame appears in front of you.
+- 8 creatures to find: Pebble, Heron, Rabbit, Stag, Seagull, Fish, Starfish and
+  Butterfly (two hands).
+- Every day starts with a **shadow of the day** that keeps your streak going.
+  Progress is saved on the device.
+
+URL options: `?paper` forces the paper screen. `?capture` is a level-authoring
+mode (see below).
+
+## How it works
+
+| Part | File |
+| --- | --- |
+| Game loop, placement on walls, flow, captions | `src/shadowplay.ts` |
+| Hand joints → projected shadow + pose features | `src/shadow/hand-shadow.ts` |
+| Pose matching (finger extension + direction) | `src/shadow/pose-match.ts` |
+| Canvas renderer: light, ghost, shadow, creature, shelf | `src/shadow/screen.ts` |
+| Levels and creature motion | `src/shadow/levels.ts`, `src/shadow/level-data.ts` |
+| Saved progress, daily shadow, streak | `src/shadow/progress.ts` |
+| Synthesized sound (no audio files) | `src/shadow/audio.ts` |
+
+- **Shadows:** each of the 25 tracked hand joints is projected from the lamp
+  onto the screen plane (a central projection), and drawn as bone capsules
+  plus a palm polygon. The shadow is drawn small and upscaled, which gives a
+  soft penumbra cheaply.
+- **Matching:** pixel overlap can't tell poses apart (a fist and "horns" look
+  92% alike) and breaks when the hand moves toward the lamp. Instead each hand
+  is reduced to how straight each finger is plus which way it points on the
+  screen. That ignores position and scale, works with either hand, and
+  separates every level cleanly (same pose: 1.00; other poses: 0.35 or less in
+  emulator tests).
+- **Walls:** detected vertical planes (WebXR plane detection) straight ahead
+  become the screen. The lamp stays low so shadows throw *above* your hands,
+  and moves back for far walls to cap magnification so the whole pose fits.
+
+## Develop
 
 ```sh
 npm install
-npm run dev
+npm run dev        # HTTPS dev server + managed browser (use for a Quest on Wi-Fi)
+npm run dev:http   # plain HTTP on http://localhost:8082 for desktop browsers
+npm run typecheck
+npm run build
 ```
 
-Use the Runtime and Editor controls in the managed browser to switch between
-the running experience and its authored scene.
+The desktop emulator (IWER) simulates a Quest 3 with hand tracking and a living
+room with planes, so the full game can be played without a headset.
 
-## Starter content
+### Authoring levels with `?capture`
 
-The robot and welcome panel are small examples of authored scene content plus
-runtime systems. The robot turns toward the player's head and plays a sound
-when pressed. To remove the robot, delete its scene node, its `RobotSystem`
-registration from `src/index.ts` or `src/index.js`, and its `Robot` registration
-from `src/components.ts` or `src/components.js`; you can then delete the unused
-robot component and system files. To remove the welcome panel, delete its scene
-node and its `PanelSystem` registration from the application entry point.
+Run the HTTPS dev server, open `/?capture` on the Quest, and hold a pose. Every
+6 seconds the current shadow and hand pose are saved to `captures/*.json`
+through the dev server. Those files feed `src/shadow/level-data.ts`.
 
-The robot stands on the second of three numbered stations. The first holds dark
-pieces you can grab and move, and the third holds a ring you can spin in place.
-The studio props (the plinths and the dark pieces, plus the floor and stage in VR
-and Desktop 3D) are built in code in `src/scene-assets/studio.scene-asset.ts` or
-`.js`. The VR and Desktop 3D background furniture is built the same way in
-`src/scene-assets/decor.scene-asset.ts` or `.js`, so the starter downloads no
-extra models. To remove any of them, delete their scene nodes and their entries
-in `src/assets.ts` or `src/assets.js`, then delete the files you no longer use.
-The station labels are `public/ui/label-*.uikitml`.
+## Deploy
 
-The rest of the look is built-in components in the scene, which you can edit in
-the editor without code. The soft light on every object is the scene root's
-`IBLGradient` (select the Level Root to edit it), and the soft shadows under
-each object are `ContactShadow` nodes. In VR and Desktop 3D, the sky is the
-scene root's `DomeGradient` (its colors, tilt and dither are also on the Level
-Root), and the floor fades into it through the `DomeFade` on the floor node. AR
-projects have no sky or floor, so passthrough stays visible, and a
-`ShadowCatcher` node grounds the stations.
-
-- Minimal scene walkthrough: https://iwsdk.dev/guides/01b-minimal-scene.html
-- XR-enabled projects — IWER emulator controls: https://iwsdk.dev/guides/02-testing-experience.html#iwer-controls
+`.github/workflows/deploy-pages.yml` builds and publishes `dist/` to GitHub
+Pages on every push to `master`. Set the repo's Pages source to "GitHub Actions"
+once.
